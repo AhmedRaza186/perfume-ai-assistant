@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { MAX_VOICE_SECONDS, VOICE_BITS_PER_SECOND } from '@/config/voice';
 
 export type RecorderStatus = 'idle' | 'recording' | 'previewing';
 
@@ -73,7 +74,7 @@ export function useVoiceRecorder(): UseVoiceRecorderResult {
         }
       }
 
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: VOICE_BITS_PER_SECOND });
       cancelledRef.current = false;
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
@@ -108,7 +109,7 @@ export function useVoiceRecorder(): UseVoiceRecorderResult {
       timerRef.current = setInterval(() => {
         elapsed += 1;
         setRecordingDuration(elapsed);
-        if (elapsed >= 60) {
+        if (elapsed >= MAX_VOICE_SECONDS) {
           clearTimer();
           if (recorder.state !== 'inactive') recorder.stop();
         }

@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { PublicError } from './http';
+import { MAX_VOICE_SECONDS } from '@/config/voice';
 
 const text = z.string().trim().min(1).max(2000);
 export const querySchema = z.object({ query: text, conversationId: z.string().uuid().optional(), requestId: z.string().uuid() });
-export const voiceSchema = z.object({ conversationId: z.string().uuid().optional(), requestId: z.string().uuid(), audioDurationSeconds: z.coerce.number().min(0.1).max(60) });
+export const voiceSchema = z.object({ conversationId: z.string().uuid().optional(), requestId: z.string().uuid(), audioDurationSeconds: z.coerce.number().min(0.1).max(MAX_VOICE_SECONDS + 1) });
 export const productSchema = z.object({
   id: z.string().regex(/^prod-[a-zA-Z0-9-]+$/).max(100), name: text.max(120), size: text.max(120),
   price: z.number().finite().min(0).max(1_000_000), description: text, notes: z.string().max(2000).optional(),

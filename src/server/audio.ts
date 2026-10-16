@@ -1,7 +1,9 @@
 import { PublicError } from './http';
+import { MAX_VOICE_LABEL, MAX_VOICE_SECONDS, VOICE_UPLOAD_BYTES } from '@/config/voice';
 
-export const AUDIO_LIMIT = 5 * 1024 * 1024;
-const MAX_SECONDS = 60.5;
+export const AUDIO_LIMIT = VOICE_UPLOAD_BYTES;
+const MAX_SECONDS = MAX_VOICE_SECONDS + 0.5;
+const tooLong = () => new PublicError(422, `Invalid recording. Voice notes must contain audio and last up to ${MAX_VOICE_LABEL}.`);
 type Container = 'webm' | 'mp4' | 'ogg' | 'wav';
 const extensions: Record<string, Container> = { 'audio/webm': 'webm', 'audio/mp4': 'mp4', 'audio/ogg': 'ogg', 'audio/wav': 'wav' };
 /** What a container parser found. Duration is undefined when the file does not record it; transcription then enforces the limit. */
@@ -129,11 +131,11 @@ export async function validateAudio(file: File) {
   const type = file.type.split(';')[0].toLowerCase();
   const expected = extensions[type];
   if (!expected) throw new PublicError(415, 'Record a WebM, MP4, Ogg or WAV voice note.');
-  if (file.size < 100 || file.size > AUDIO_LIMIT) throw new PublicError(413, 'Voice notes must be nonempty and under 5 MB.');
+  if (file.size < 100 || file.size > AUDIO_LIMIT) throw new PublicError(413, `Voice notes must be nonempty and under ${VOICE_UPLOAD_BYTES / 1024 / 1024} MB.`);
   const bytes = new Uint8Array(await file.arrayBuffer());
   const actual = sniff(bytes);
   if (!actual) throw new PublicError(422, 'Could not read this recording. Please record again or type your question.');
-  const invalid = new PublicError(422, 'Invalid recording. Voice notes must contain audio and last up to 60 seconds.');
+  const invalid = tooLong();
   if (actual !== expected) throw invalid;
   let info: Inspection;
   try { info = inspectors[actual](bytes); }
@@ -146,5 +148,5 @@ export async function validateAudio(file: File) {
 }
 /** Applies the duration limit to formats whose files do not record it, using the transcription service's measurement. */
 export function checkTranscribedDuration(seconds: unknown) {
-  if (typeof seconds === 'number' && seconds > MAX_SECONDS) throw new PublicError(422, 'Invalid recording. Voice notes must contain audio and last up to 60 seconds.');
+  if (typeof seconds === 'number' && seconds > MAX_SECONDS) throw tooLong();
 }

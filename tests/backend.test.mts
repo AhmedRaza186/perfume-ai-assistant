@@ -179,16 +179,16 @@ test('CSRF rejects cross-origin requests and streaming input is bounded independ
   } finally { delete process.env.VERCEL_URL; delete process.env.VERCEL_BRANCH_URL; process.env.APP_ORIGIN = 'http://localhost:3000'; }
   await assert.rejects(boundedBody(new Request('http://localhost:3000', { method: 'POST', body: 'oversized' }), 2), /too large/);
 });
-function wav(seconds: number) {
-  const data = Buffer.alloc(Math.round(seconds * 16000 * 2)); const header = Buffer.alloc(44);
+function wav(seconds: number, rate = 16000) {
+  const data = Buffer.alloc(Math.round(seconds * rate * 2)); const header = Buffer.alloc(44);
   header.write('RIFF'); header.writeUInt32LE(data.length + 36, 4); header.write('WAVEfmt ', 8);
   header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(16000, 24); header.writeUInt32LE(32000, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34);
+  header.writeUInt32LE(rate, 24); header.writeUInt32LE(rate * 2, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34);
   header.write('data', 36); header.writeUInt32LE(data.length, 40); return Buffer.concat([header, data]);
 }
 test('container parser checks real WAV duration and rejects invalid, mismatched, empty and long recordings', async () => {
   assert.equal((await validateAudio(new File([wav(1)], 'one.wav', { type: 'audio/wav' }))).type, 'audio/wav');
-  await assert.rejects(validateAudio(new File([wav(61)], 'long.wav', { type: 'audio/wav' })), /up to 60 seconds/);
+  await assert.rejects(validateAudio(new File([wav(181, 8000)], 'long.wav', { type: 'audio/wav' })), /up to 3 minutes/);
   await assert.rejects(validateAudio(new File([wav(1)], 'mismatch.webm', { type: 'audio/webm' })), /Invalid recording/);
   await assert.rejects(validateAudio(new File([Buffer.alloc(400)], 'bad.wav', { type: 'audio/wav' })), /Could not read/);
   await assert.rejects(validateAudio(new File([], 'empty.wav', { type: 'audio/wav' })), /nonempty/);
@@ -228,20 +228,21 @@ test('in-process parser reads real Chrome MediaRecorder WebM and Ogg/MP4 duratio
   assert.equal((await validateAudio(new File([recorded], 'voice.webm', { type: 'audio/webm;codecs=opus' }))).type, 'audio/webm');
   const voice = (bytes: Buffer, type: string) => validateAudio(new File([new Uint8Array(bytes)], 'voice', { type }));
   assert.equal((await voice(webm(2, 5000), 'audio/webm')).type, 'audio/webm');
-  await assert.rejects(voice(webm(2, 61000), 'audio/webm'), /up to 60 seconds/);
+  assert.equal((await voice(webm(2, 150_000), 'audio/webm')).type, 'audio/webm');
+  await assert.rejects(voice(webm(2, 181_000), 'audio/webm'), /up to 3 minutes/);
   await assert.rejects(voice(webm(1, 5000), 'audio/webm'), /Invalid recording/);
   assert.equal((await voice(ogg(5), 'audio/ogg')).type, 'audio/ogg');
   assert.ok(Math.abs(inspectAudio(ogg(5)).duration! - 5) < 0.01);
-  await assert.rejects(voice(ogg(61), 'audio/ogg'), /up to 60 seconds/);
+  await assert.rejects(voice(ogg(181), 'audio/ogg'), /up to 3 minutes/);
   assert.equal((await voice(mp4('soun', 5), 'audio/mp4')).type, 'audio/mp4');
-  await assert.rejects(voice(mp4('soun', 61), 'audio/mp4'), /up to 60 seconds/);
+  await assert.rejects(voice(mp4('soun', 181), 'audio/mp4'), /up to 3 minutes/);
   await assert.rejects(voice(mp4('vide', 5), 'audio/mp4'), /Invalid recording/);
   await assert.rejects(voice(Buffer.concat([recorded.subarray(0, 40), Buffer.alloc(200, 0xff)]), 'audio/webm'), /Could not read|Invalid recording/);
 });
 test('transcription-reported duration enforces the limit for files without a recorded duration', async () => {
   const { checkTranscribedDuration } = await import('../src/server/audio');
-  checkTranscribedDuration(30); checkTranscribedDuration(undefined);
-  assert.throws(() => checkTranscribedDuration(75), /up to 60 seconds/);
+  checkTranscribedDuration(170); checkTranscribedDuration(undefined);
+  assert.throws(() => checkTranscribedDuration(200), /up to 3 minutes/);
 });
 test('API messages preserve existing data, identify invalid fields and never expose internal errors or submitted secrets', async () => {
   const success = await json({ text: 'Answer', conversationId: 'conversation' }, 200, 'Your question was answered.').json();
