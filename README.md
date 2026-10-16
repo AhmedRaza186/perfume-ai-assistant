@@ -51,7 +51,6 @@ npm start
 | DATABASE_URL | Postgres connection string (Neon); use sslmode=verify-full |
 | DATABASE_POOL_SIZE | Optional; defaults to 5 connections |
 | ENABLE_DEMO_RESET | false by default; true allows an authenticated, explicitly confirmed reset |
-| FFPROBE_PATH | Optional absolute override for the bundled ffprobe executable |
 | TRUST_PROXY | false by default; true only if your proxy overwrites forwarded IP headers |
 
 Documentation reviewed on October 12, 2026:
@@ -87,7 +86,7 @@ To audition the currently configured voice independently of transcription, run `
 
 POST /api/chat accepts query (1–2,000 characters), requestId (UUID), and optional conversationId. It returns the existing structured service response plus conversationId. It does not generate audio for text queries.
 
-POST /api/voice-query accepts multipart fields audio, audioDurationSeconds, requestId and optional conversationId. Browser MediaRecorder WebM/Opus, MP4 and Ogg, plus WAV, are supported. The declared duration is validated but never trusted: ffprobe inspects the actual container, streams and packet timestamps, including WebM without a duration header. Recordings have a 5 MB / 60-second limit, are held only temporarily, and are deleted in a finally block. Whisper uses transcription with automatic language detection, never the translation endpoint.
+POST /api/voice-query accepts multipart fields audio, audioDurationSeconds, requestId and optional conversationId. Browser MediaRecorder WebM/Opus, MP4 and Ogg, plus WAV, are supported. The declared duration is validated but never trusted: an in-process parser (no external binary, so it runs on serverless hosts) checks the real container against the declared type, requires an audio stream and no video, and reads the duration from WAV headers, WebM cluster/block timecodes (MediaRecorder writes no duration header), Ogg granule positions or the MP4 mvhd box. When a file does not record its duration, the 60-second limit is enforced on the duration reported by transcription. Recordings have a 5 MB / 60-second limit, are held only temporarily, and are deleted in a finally block. Whisper uses transcription with automatic language detection, never the translation endpoint.
 
 Both routes call the same Gemini answer service. Every turn loads the latest stored catalogue and policies. The prompt treats customer messages as untrusted, asks for clarification when ambiguous and forbids unstored claims. Recommendations are built from the real catalogue after validating the model's ID. Unsupported numeric claims and malformed structured answers are rejected. Generative language still needs real-provider acceptance testing; numeric checks cannot establish the truth of every prose claim.
 
@@ -133,7 +132,7 @@ Completed in this implementation:
 
 - Lint with no warnings/errors, TypeScript check and production build passed.
 - 12 backend tests passed. Provider calls are explicitly mocked: stored facts in prompts, follow-up history, edited policies, unknown-data instructions, rejected invented product IDs/numeric claims, separate Urdu transcript, generated WAV plumbing, TTS/transcription failures, approval gates, saved handoff, quota failure and duplicate/concurrent requests.
-- Actual ffprobe validated WAV container duration and rejected malformed, mismatched, empty and overlong recordings.
+- The in-process container parser validated WAV and real Chrome MediaRecorder WebM duration and rejected malformed, mismatched, empty and overlong recordings.
 - Production HTTP smoke checks passed against an isolated database and ephemeral admin account: unauthorized admin/audio access, login, CSRF, seeded price, persisted policy/session after restart, confirmed reset, honest missing-provider responses, invalid input and logout revocation. No provider calls were made.
 - providers:check was run and reported GEMINI_API_KEY / GROQ_API_KEY missing. Real answer quality, actual Urdu recording transcription, account quota and playable Urdu TTS were **not verified**; no review sample could be generated.
 - Browser microphone permission, device recording, mixed-language speech quality and full UI playback still require local acceptance testing with keys and a microphone.

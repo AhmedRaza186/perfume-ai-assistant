@@ -1,4 +1,5 @@
 import 'server-only';
+import { checkTranscribedDuration } from './audio';
 import { limit, PublicError } from './http';
 import { parse } from './validation';
 import { z } from 'zod';
@@ -118,6 +119,7 @@ export async function transcribe(file: File): Promise<string> {
       `Voice transcription is unavailable. Please retry later or type your question.${error instanceof PublicError ? ` ${error.message}` : ''}`,
       error instanceof PublicError ? error.code : 'transcription_failed', error instanceof PublicError ? error.details : undefined);
   });
+  checkTranscribedDuration(data.duration);
   const transcript = typeof data.text === 'string' ? data.text.trim() : '';
   const segments = data.segments as { no_speech_prob?: number }[] | undefined;
   if (!transcript || transcript.length > 2000 || (segments?.length && segments.every(s => (s.no_speech_prob || 0) > 0.8)))

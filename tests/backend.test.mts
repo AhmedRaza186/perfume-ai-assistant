@@ -186,13 +186,62 @@ function wav(seconds: number) {
   header.writeUInt32LE(16000, 24); header.writeUInt32LE(32000, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34);
   header.write('data', 36); header.writeUInt32LE(data.length, 40); return Buffer.concat([header, data]);
 }
-test('real ffprobe checks valid WAV container duration and rejects invalid, mismatched, empty and long recordings', async () => {
+test('container parser checks real WAV duration and rejects invalid, mismatched, empty and long recordings', async () => {
   assert.equal((await validateAudio(new File([wav(1)], 'one.wav', { type: 'audio/wav' }))).type, 'audio/wav');
   await assert.rejects(validateAudio(new File([wav(61)], 'long.wav', { type: 'audio/wav' })), /up to 60 seconds/);
   await assert.rejects(validateAudio(new File([wav(1)], 'mismatch.webm', { type: 'audio/webm' })), /Invalid recording/);
   await assert.rejects(validateAudio(new File([Buffer.alloc(400)], 'bad.wav', { type: 'audio/wav' })), /Could not read/);
   await assert.rejects(validateAudio(new File([], 'empty.wav', { type: 'audio/wav' })), /nonempty/);
   await assert.rejects(validateAudio(new File([wav(1)], 'file.txt', { type: 'text/plain' })), /Record a/);
+});
+// Minimal synthetic containers. EBML: id bytes + size vint; 0x01FFFFFFFFFFFFFF is an unknown size, as MediaRecorder writes.
+function sizeVint(n: number) { const b = Buffer.alloc(8); b[0] = 0x01; b.writeUIntBE(n, 2, 6); return b; }
+const ebml = (id: number[], body: Buffer) => Buffer.concat([Buffer.from(id), sizeVint(body.length), body]);
+const unknown = (id: number[], body: Buffer) => Buffer.concat([Buffer.from(id), Buffer.from([0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), body]);
+function webm(trackType: number, clusterMs: number) {
+  const block = Buffer.from([0x81, 0x00, 0x00, 0x80, 1, 2, 3, 4]); // track 1, relative timecode 0, flags, frame bytes
+  return Buffer.concat([ebml([0x1a, 0x45, 0xdf, 0xa3], ebml([0x42, 0x82], Buffer.from('webm'))), unknown([0x18, 0x53, 0x80, 0x67], Buffer.concat([
+    ebml([0x16, 0x54, 0xae, 0x6b], ebml([0xae], ebml([0x83], Buffer.from([trackType])))),
+    unknown([0x1f, 0x43, 0xb6, 0x75], Buffer.concat([ebml([0xe7], Buffer.from([clusterMs >> 16, (clusterMs >> 8) & 0xff, clusterMs & 0xff])), ebml([0xa3], block)])),
+  ]))]);
+}
+function oggPage(granule: number, payload: Buffer) {
+  const header = Buffer.alloc(27); header.write('OggS'); header.writeBigInt64LE(BigInt(granule), 6); header[26] = 1;
+  return Buffer.concat([header, Buffer.from([payload.length]), payload]);
+}
+function ogg(seconds: number) {
+  const head = Buffer.alloc(19); head.write('OpusHead'); head[8] = 1; head[9] = 1; head.writeUInt16LE(312, 10);
+  return Buffer.concat([oggPage(0, head), oggPage(312 + seconds * 48000, Buffer.alloc(100))]);
+}
+const box = (type: string, body: Buffer) => { const header = Buffer.alloc(8); header.writeUInt32BE(8 + body.length); header.write(type, 4); return Buffer.concat([header, body]); };
+function mp4(handler: string, seconds: number) {
+  const mvhd = Buffer.alloc(100); mvhd.writeUInt32BE(1000, 12); mvhd.writeUInt32BE(seconds * 1000, 16);
+  const hdlr = Buffer.alloc(24); hdlr.write(handler, 8);
+  return Buffer.concat([box('ftyp', Buffer.from('isomiso2')), box('moov', Buffer.concat([box('mvhd', mvhd), box('trak', box('mdia', box('hdlr', hdlr)))]))]);
+}
+test('in-process parser reads real Chrome MediaRecorder WebM and Ogg/MP4 durations without an external binary', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { inspectAudio } = await import('../src/server/audio');
+  const recorded = await readFile(new URL('./fixtures/chrome-mediarecorder.webm', import.meta.url));
+  const real = inspectAudio(recorded); // 2-second headless Chrome recording: unknown-size segments, no Duration element.
+  assert.equal(real.container, 'webm'); assert.equal(real.audio, true); assert.ok(real.duration! > 1.5 && real.duration! < 2.5, String(real.duration));
+  assert.equal((await validateAudio(new File([recorded], 'voice.webm', { type: 'audio/webm;codecs=opus' }))).type, 'audio/webm');
+  const voice = (bytes: Buffer, type: string) => validateAudio(new File([new Uint8Array(bytes)], 'voice', { type }));
+  assert.equal((await voice(webm(2, 5000), 'audio/webm')).type, 'audio/webm');
+  await assert.rejects(voice(webm(2, 61000), 'audio/webm'), /up to 60 seconds/);
+  await assert.rejects(voice(webm(1, 5000), 'audio/webm'), /Invalid recording/);
+  assert.equal((await voice(ogg(5), 'audio/ogg')).type, 'audio/ogg');
+  assert.ok(Math.abs(inspectAudio(ogg(5)).duration! - 5) < 0.01);
+  await assert.rejects(voice(ogg(61), 'audio/ogg'), /up to 60 seconds/);
+  assert.equal((await voice(mp4('soun', 5), 'audio/mp4')).type, 'audio/mp4');
+  await assert.rejects(voice(mp4('soun', 61), 'audio/mp4'), /up to 60 seconds/);
+  await assert.rejects(voice(mp4('vide', 5), 'audio/mp4'), /Invalid recording/);
+  await assert.rejects(voice(Buffer.concat([recorded.subarray(0, 40), Buffer.alloc(200, 0xff)]), 'audio/webm'), /Could not read|Invalid recording/);
+});
+test('transcription-reported duration enforces the limit for files without a recorded duration', async () => {
+  const { checkTranscribedDuration } = await import('../src/server/audio');
+  checkTranscribedDuration(30); checkTranscribedDuration(undefined);
+  assert.throws(() => checkTranscribedDuration(75), /up to 60 seconds/);
 });
 test('API messages preserve existing data, identify invalid fields and never expose internal errors or submitted secrets', async () => {
   const success = await json({ text: 'Answer', conversationId: 'conversation' }, 200, 'Your question was answered.').json();
