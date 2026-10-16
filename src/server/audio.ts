@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, chmod, copyFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ffprobe from 'ffprobe-static';
@@ -14,6 +15,23 @@ const formats: Record<string, { extension: string; format: RegExp }> = {
   'audio/ogg': { extension: 'ogg', format: /ogg/ },
   'audio/wav': { extension: 'wav', format: /wav/ },
 };
+let binary: Promise<string> | undefined;
+/** Locates ffprobe. Bundling can drop the executable bit, so a readable copy is made executable under the temp directory. */
+function ffprobeBinary() {
+  if (process.env.FFPROBE_PATH) return Promise.resolve(process.env.FFPROBE_PATH);
+  binary ??= (async () => {
+    const name = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+    for (const candidate of [ffprobe.path, path.join(process.cwd(), 'node_modules/ffprobe-static/bin', process.platform, process.arch, name)]) {
+      try { await access(candidate, constants.X_OK); return candidate; } catch { /* Try a private executable copy. */ }
+      try { await access(candidate, constants.R_OK); } catch { continue; }
+      const copy = path.join(tmpdir(), `perfume-${name}`);
+      await copyFile(candidate, copy); await chmod(copy, 0o755);
+      return copy;
+    }
+    throw Object.assign(new Error('ffprobe binary not found'), { code: 'FFPROBE_MISSING' });
+  })().catch(error => { binary = undefined; throw error; });
+  return binary;
+}
 export async function validateAudio(file: File) {
   const type = file.type.split(';')[0].toLowerCase();
   const format = formats[type];
@@ -24,7 +42,7 @@ export async function validateAudio(file: File) {
   try {
     await writeFile(filename, Buffer.from(await file.arrayBuffer()));
     // Inspect the container AND packets: MediaRecorder WebM frequently lacks a duration header.
-    const { stdout } = await exec(process.env.FFPROBE_PATH || ffprobe.path,
+    const { stdout } = await exec(await ffprobeBinary(),
       ['-v', 'error', '-show_entries', 'format=format_name,duration:stream=codec_type:packet=pts_time,duration_time', '-of', 'json', filename],
       { timeout: 8000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
     const info = JSON.parse(stdout);
@@ -38,8 +56,12 @@ export async function validateAudio(file: File) {
   } catch (error) {
     if (error instanceof PublicError) throw error;
     // Only the failure kind is logged (e.g. ENOENT when the ffprobe binary is missing), never the recording.
-    console.error('Voice note inspection failed:', (error as NodeJS.ErrnoException).code ?? (error as Error).name);
-    throw new PublicError(422, 'Could not read this recording. Please record again or type your question.');
+    // ffprobe's own diagnostic (e.g. "Invalid data found when processing input"), with the temp path removed.
+    const reason = String((error as { stderr?: string }).stderr || '').replaceAll(filename, 'input').trim().split('\n').at(-1)?.slice(0, 200);
+    const kind = [(error as NodeJS.ErrnoException).code ?? (error as Error).name, reason].filter(Boolean).join(': ');
+    console.error('Voice note inspection failed:', kind, `(${type}, ${file.size} bytes)`);
+    throw new PublicError(422, 'Could not read this recording. Please record again or type your question.', 'invalid_recording',
+      [{ field: 'inspection', message: kind }]);
   } finally {
     const resolved = path.resolve(directory);
     const parent = path.resolve(tmpdir());
