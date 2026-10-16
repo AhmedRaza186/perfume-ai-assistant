@@ -4,10 +4,10 @@ import { guarded, json, readJson, sameOrigin } from '@/server/http';
 import { storeSnapshot, updateStore } from '@/server/admin';
 
 export async function GET() {
-  return guarded(async () => { await requireAdmin(); return json(storeSnapshot(), 200, 'Store products, policies and enquiries were loaded successfully.'); });
+  return guarded(async () => { await requireAdmin(); return json(await storeSnapshot(), 200, 'Store products, policies and enquiries were loaded successfully.'); });
 }
 export async function PUT(request: Request) {
-  return guarded(async () => { await requireAdmin(); sameOrigin(request); return json(updateStore(await readJson(request, 512_000)), 200, 'Your store changes were saved successfully.'); });
+  return guarded(async () => { await requireAdmin(); sameOrigin(request); return json(await updateStore(await readJson(request, 512_000)), 200, 'Your store changes were saved successfully.'); });
 }
 
 export const POST = () => methodNotAllowed(['GET', 'PUT']);

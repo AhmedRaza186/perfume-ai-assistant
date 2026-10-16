@@ -3,12 +3,14 @@ import { guarded, json, publicLimit, sameOrigin, boundedBody, PublicError } from
 import { parse, voiceSchema } from '@/server/validation';
 import { customerOwner } from '@/server/auth';
 import { respond } from '@/server/assistant';
+import { requireAccess } from '@/server/access';
 import { AUDIO_LIMIT, validateAudio } from '@/server/audio';
 
 
 export async function POST(request: Request) {
   return guarded(async () => {
-    sameOrigin(request); publicLimit(request, 'voice', 4);
+    sameOrigin(request); await publicLimit(request, 'voice', 4);
+    await requireAccess();
     const contentType = request.headers.get('content-type');
     if (!contentType?.startsWith('multipart/form-data')) throw new PublicError(415, 'Upload the recording as multipart form data.');
     let form: FormData;

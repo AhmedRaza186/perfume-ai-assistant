@@ -6,37 +6,37 @@ import { INITIAL_POLICIES } from '@/fixtures/policies';
 import { z } from 'zod';
 import type { Enquiry } from '@/types/enquiry';
 
-export function storeSnapshot() {
-  db().prepare('INSERT OR IGNORE INTO settings VALUES (?,?)').run('revision', '0');
-  return { products: products(), policies: policies(), enquiries: enquiries(), revision: readSetting<number>('revision') };
+export async function storeSnapshot() {
+  return { products: await products(), policies: await policies(), enquiries: await enquiries(), revision: await readSetting<number>('revision') };
 }
-export function updateStore(input: unknown) {
+export async function updateStore(input: unknown) {
   const { section, data, revision } = parse(z.object({ section: z.enum(['products', 'policies', 'enquiries']), data: z.unknown(), revision: z.number().int().min(0) }), input);
-  return transaction(() => {
-    const current = storeSnapshot();
+  return transaction(async () => {
+    const current = await storeSnapshot();
     if (revision !== current.revision) throw new PublicError(409, 'Store data changed in another session. Reload and try again.');
-    if (section === 'products') writeSetting('products', parse(productsSchema, data));
-    if (section === 'policies') writeSetting('policies', parse(policiesSchema, data));
+    if (section === 'products') await writeSetting('products', parse(productsSchema, data));
+    if (section === 'policies') await writeSetting('policies', parse(policiesSchema, data));
     if (section === 'enquiries') {
       const updates = parse(z.array(enquiryUpdateSchema).max(500), data);
       for (const update of updates) {
-        const row = db().prepare('SELECT value FROM enquiries WHERE id=?').get(update.id) as { value: string } | undefined;
+        const row = await db().prepare('SELECT value FROM enquiries WHERE id=?').get<{ value: string }>(update.id);
         if (!row) throw new PublicError(404, 'Enquiry not found.');
         const enquiry = JSON.parse(row.value) as Enquiry;
-        db().prepare('UPDATE enquiries SET value=? WHERE id=?').run(JSON.stringify({ ...enquiry, ...update }), update.id);
+        await db().prepare('UPDATE enquiries SET value=? WHERE id=?').run(JSON.stringify({ ...enquiry, ...update }), update.id);
       }
     }
-    writeSetting('revision', current.revision + 1);
+    await writeSetting('revision', current.revision + 1);
     return storeSnapshot();
   });
 }
-export function resetStore() {
-  return transaction(() => {
-    const current = storeSnapshot();
-    if (db().prepare("SELECT request FROM turns WHERE status='pending' LIMIT 1").get()) throw new PublicError(409, 'Wait for active conversations to finish before resetting.');
-    writeSetting('products', INITIAL_PRODUCTS); writeSetting('policies', INITIAL_POLICIES);
-    db().exec('DELETE FROM audio; DELETE FROM recordings; DELETE FROM enquiries; DELETE FROM turns; DELETE FROM human_messages; DELETE FROM order_drafts; DELETE FROM order_requests; DELETE FROM conversations; UPDATE customer_preferences SET current_conversation=NULL;');
-    writeSetting('revision', current.revision + 1);
+export async function resetStore() {
+  return transaction(async () => {
+    const current = await storeSnapshot();
+    if (await db().prepare("SELECT request FROM turns WHERE status='pending' LIMIT 1").get()) throw new PublicError(409, 'Wait for active conversations to finish before resetting.');
+    await writeSetting('products', INITIAL_PRODUCTS); await writeSetting('policies', INITIAL_POLICIES);
+    for (const table of ['audio', 'recordings', 'enquiries', 'turns', 'human_messages', 'order_drafts', 'order_requests', 'conversations']) await db().exec(`DELETE FROM ${table}`);
+    await db().exec('UPDATE customer_preferences SET current_conversation=NULL');
+    await writeSetting('revision', current.revision + 1);
     return storeSnapshot();
   });
 }

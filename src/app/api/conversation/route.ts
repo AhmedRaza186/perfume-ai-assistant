@@ -15,34 +15,34 @@ const actions = z.discriminatedUnion('action', [
 ]);
 export async function GET(request: Request) {
   return guarded(async () => {
-    publicLimit(request, 'history', 40);
+    await publicLimit(request, 'history', 40);
     const raw = new URL(request.url).searchParams.get('id');
     const requested = raw ? parse(id, raw) : undefined;
     const owner = requested ? await existingCustomerOwner() : await customerOwner();
-    return json(customerSnapshot(owner, requested), 200, 'Your saved conversation and preferences were loaded.');
+    return json(await customerSnapshot(owner, requested), 200, 'Your saved conversation and preferences were loaded.');
   });
 }
 export async function POST(request: Request) {
   return guarded(async () => {
-    sameOrigin(request); publicLimit(request, 'workflow', 15);
+    sameOrigin(request); await publicLimit(request, 'workflow', 15);
     const input = parse(actions, await readJson(request));
     const owner = await customerOwner();
-    if (input.action === 'new') startConversation(owner);
-    else if (input.action === 'preference') replyPreference(owner, input.replyFormat);
+    if (input.action === 'new') await startConversation(owner);
+    else if (input.action === 'preference') await replyPreference(owner, input.replyFormat);
     else if (input.action === 'handoff') {
-      const current = input.conversationId || customerSnapshot(owner).conversationId || startConversation(owner);
-      conversation(current, owner); requestHandoff(current);
+      const current = input.conversationId || (await customerSnapshot(owner)).conversationId || await startConversation(owner);
+      await conversation(current, owner); await requestHandoff(current);
     } else {
-      const row = conversation(input.conversationId, owner);
-      if (row.state === 'HUMAN_ACTIVE') return json(customerSnapshot(owner, row.id), 200, 'A person is helping you. Please send order changes in the conversation for them to review.');
-      if (input.action === 'edit-order') patchDraft(row.id, input.details, input.revision);
+      const row = await conversation(input.conversationId, owner);
+      if (row.state === 'HUMAN_ACTIVE') return json(await customerSnapshot(owner, row.id), 200, 'A person is helping you. Please send order changes in the conversation for them to review.');
+      if (input.action === 'edit-order') await patchDraft(row.id, input.details, input.revision);
       else {
-        const saved = submitDraft(row.id, input.quoteToken, input.confirmed);
-        return json({ ...customerSnapshot(owner, row.id), orderReference: saved.reference, text: orderReceived }, 200, 'Your order request was received for team review.');
+        const saved = await submitDraft(row.id, input.quoteToken, input.confirmed);
+        return json({ ...await customerSnapshot(owner, row.id), orderReference: saved.reference, text: orderReceived }, 200, 'Your order request was received for team review.');
       }
-      return json(customerSnapshot(owner, row.id), 200, 'Your draft changes were saved. Review the updated summary before submitting.');
+      return json(await customerSnapshot(owner, row.id), 200, 'Your draft changes were saved. Review the updated summary before submitting.');
     }
-    return json(customerSnapshot(owner), 200, 'Your conversation settings were saved.');
+    return json(await customerSnapshot(owner), 200, 'Your conversation settings were saved.');
   });
 }
 export const PUT = () => methodNotAllowed(['GET', 'POST']);

@@ -1,16 +1,16 @@
 import { methodNotAllowed } from '@/server/http';
 import { z } from 'zod';
-import { login } from '@/server/auth';
+import { chatLogin } from '@/server/access';
 import { guarded, json, publicLimit, readJson, sameOrigin } from '@/server/http';
 import { parse } from '@/server/validation';
 
 
 export async function POST(request: Request) {
   return guarded(async () => {
-    sameOrigin(request); publicLimit(request, 'login', 5);
-    const input = parse(z.object({ username: z.string().min(1).max(100), password: z.string().min(1).max(256) }), await readJson(request, 2000));
-    await login(input.username, input.password);
-    return json({ ok: true }, 200, 'You are signed in as an administrator.');
+    sameOrigin(request); await publicLimit(request, 'login', 5);
+    const input = parse(z.object({ username: z.string().trim().min(1).max(64), password: z.string().min(1).max(256) }), await readJson(request, 2000));
+    await chatLogin(input.username, input.password);
+    return json({ ok: true }, 200, 'You are signed in.');
   });
 }
 

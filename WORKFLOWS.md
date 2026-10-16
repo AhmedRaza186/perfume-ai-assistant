@@ -4,7 +4,7 @@ No new environment variables, billing changes or provider changes are required. 
 
 ## Migrations and existing data
 
-SQLite applies ordered, transactional migrations from `src/server/migrations.ts` once per database, tracked in `schema_migrations`. Version 1 adds conversation state/epochs, preferences, order drafts/requests, human messages and knowledge. Version 2 adds private original voice recordings. Existing product/policy settings, sessions, conversations, turns and enquiries are preserved. Existing conversations start in AI_ACTIVE. The first history restore adopts the latest owned legacy conversation.
+Postgres applies ordered, transactional migrations from `src/server/migrations.ts` once per database, tracked in `schema_migrations` and guarded by an advisory lock so concurrent instances apply each once. Version 1 creates the full schema, including chat accounts and their sessions. Conversations start in AI_ACTIVE.
 
 Existing business records are not filled with fictional metadata. New demo seeds explicitly mark their source and include fictional preferences. In Products, a matching demo item has an explicit “Fill clearly fictional demo preference metadata” form action; review and save it yourself. For real products, record verified volume, fragrance families, occasions and guidance. Recommendations cannot verify office/gift/family preferences until the relevant metadata exists.
 
@@ -35,7 +35,7 @@ Take over invalidates the generation epoch. State and epoch are checked after tr
 
 Both interfaces poll at four-second intervals without concurrent polling requests, pause on inactive pages, and abort on unmount. AI requests and mutations take precedence over polling.
 
-Original recordings are private in SQLite for 15 minutes, served from `/api/recordings/[id]` only to their owner or a signed-in administrator. Generated audio retains its existing private 15-minute expiry and is also accessible to authenticated admin reviewers. Playback is manual through the shared single-active player. After expiry, restored history shows transcript-only access and removes expired audio URLs. Transcription failures retain a private original recording for review until expiry. Conversations, related customer messages/drafts/requests/enquiries and transcripts expire after 30 days from conversation creation. Customer sessions/preferences retain their existing 24-hour lifetime; admin sessions retain eight hours. No sensitive customer message contents are logged by the server.
+Original recordings are private in the database for 15 minutes, served from `/api/recordings/[id]` only to their owner or a signed-in administrator. Generated audio retains its existing private 15-minute expiry and is also accessible to authenticated admin reviewers. Playback is manual through the shared single-active player. After expiry, restored history shows transcript-only access and removes expired audio URLs. Transcription failures retain a private original recording for review until expiry. Anonymous conversations, related customer messages/drafts/requests/enquiries and transcripts expire after 30 days from conversation creation; conversations of signed-in accounts are kept. Anonymous sessions/preferences retain their 24-hour lifetime; account sessions last 30 days and owner sessions eight hours. No sensitive customer message contents are logged by the server.
 
 ## Knowledge
 

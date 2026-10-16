@@ -22,7 +22,7 @@ export function methodNotAllowed(allowed: string[]) {
   return response;
 }
 export async function guarded(fn: () => Promise<Response>) {
-  try { cleanup(); return await fn(); } catch (error) { return errorResponse(error); }
+  try { await cleanup(); return await fn(); } catch (error) { return errorResponse(error); }
 }
 export function sameOrigin(request: Request) {
   const url = new URL(request.url);
@@ -52,16 +52,16 @@ export async function readJson(request: Request, max = 32_000) {
   catch (error) { if (error instanceof PublicError) throw error; throw new PublicError(400, 'The request body is not valid JSON. Check its commas, quotes and braces, then try again.'); }
 }
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-export function limit(key: string, max: number, period = 60_000) {
+export async function limit(key: string, max: number, period = 60_000) {
   const now = Date.now();
-  const row = db().prepare(`INSERT INTO limits VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET
-    count=CASE WHEN expires<=? THEN 1 ELSE count+1 END,
-    expires=CASE WHEN expires<=? THEN excluded.expires ELSE expires END RETURNING count`).get(key, now + period, now, now) as { count: number };
+  const row = (await db().prepare(`INSERT INTO limits VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET
+    count=CASE WHEN limits.expires<=? THEN 1 ELSE limits.count+1 END,
+    expires=CASE WHEN limits.expires<=? THEN excluded.expires ELSE limits.expires END RETURNING count`).get<{ count: number }>(key, now + period, now, now))!;
   if (row.count > max) throw new PublicError(429, 'Too many requests. Please wait and try again.', 'rate_limit');
 }
-export function publicLimit(request: Request, scope: string, max: number) {
+export async function publicLimit(request: Request, scope: string, max: number) {
   // A single-process demo uses a global ceiling. Forwarded IPs are trusted only behind an explicitly configured proxy.
-  limit(`global:${scope}`, max * 5);
+  await limit(`global:${scope}`, max * 5);
   const ip = process.env.TRUST_PROXY === 'true' ? request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() : 'local';
-  limit(`${scope}:${hash(ip || 'unknown')}`, max);
+  await limit(`${scope}:${hash(ip || 'unknown')}`, max);
 }

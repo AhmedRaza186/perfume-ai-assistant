@@ -26,7 +26,7 @@ async function main() {
     for (const model of expected) if (!ids.has(model)) throw new Error(`Configured model is unavailable: ${model}`);
   }
   const output = path.resolve('./provider-check-output'); await mkdir(output, { recursive: true });
-  const answer = await answerQuestion('Velvet Oud ki price aur size kya hai? Online payment aur COD available hain?', [], products(), policies());
+  const answer = await answerQuestion('Velvet Oud ki price aur size kya hai? Online payment aur COD available hain?', [], await products(), await policies());
   console.log('Real catalogue answer:', answer.text);
   await writeFile(path.join(output, 'answer.json'), JSON.stringify(answer, null, 2));
   const recording = process.argv[2];

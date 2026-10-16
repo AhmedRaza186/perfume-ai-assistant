@@ -11,7 +11,7 @@ async function main() {
   const { recommendationMatches } = await import('../src/server/assistant');
   const { validateAudio } = await import('../src/server/audio');
   const { PublicError } = await import('../src/server/http');
-  const catalogue = products(); const rules = policies();
+  const catalogue = await products(); const rules = await policies();
   const first = catalogue.find(p => p.id === 'prod-velvet-oud') || catalogue[0];
   if (!first) throw new Error('A catalogue product is required for acceptance checks.');
   const price = await answerQuestion(`${first.name} ki price kya hai? Online payment aur COD available hain?`, [], catalogue, rules);

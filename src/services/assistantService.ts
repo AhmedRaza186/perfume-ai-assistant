@@ -5,6 +5,8 @@ export class AssistantError extends Error {
   constructor(message: string, public details: { field: string; message: string }[] = []) { super(message); }
 }
 
+export class AccessRequiredError extends Error {}
+
 class HttpAssistantService implements IAnswerService {
   private conversationId?: string;
   private attempts = new Map<string, string>();
@@ -36,6 +38,7 @@ class HttpAssistantService implements IAnswerService {
       // Keep the identifier for requests still in flight or with an uncertain network outcome.
       if (response.status !== 409) this.attempts.delete(attemptKey);
       else if (!String(data.error).includes('still processing')) this.attempts.delete(attemptKey);
+      if (data.code === 'access_required') throw new AccessRequiredError(data.error);
       throw new Error(data.error || 'Assistant unavailable. Please retry or type your question.');
     }
     this.attempts.delete(attemptKey);
@@ -61,5 +64,16 @@ class HttpAssistantService implements IAnswerService {
     return this.send('/api/voice-query', { method: 'POST', body: form }, attempt.key);
   }
 }
+export interface ChatAccess { granted: boolean; username: string | null }
+async function accessRequest(init?: RequestInit): Promise<ChatAccess> {
+  const response = await fetch('/api/access', { ...init, cache: 'no-store', credentials: 'same-origin' });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Sign-in failed.');
+  return { granted: !!data.granted, username: data.username ?? null };
+}
+export const accessStatus = () => accessRequest();
+export const unlockAccess = (username: string, password: string) => accessRequest({ method: 'POST',
+  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+export const signOutAccess = () => accessRequest({ method: 'DELETE' });
 export const assistantService = new HttpAssistantService();
 

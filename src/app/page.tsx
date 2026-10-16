@@ -9,7 +9,8 @@ import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { OrderSummary } from '@/components/chat/OrderSummary';
 import type { ChatMessage } from '@/types/chat';
 import type { ConversationSnapshot, OrderDetails } from '@/types/workflow';
-import { assistantService } from '@/services/assistantService';
+import { assistantService, AccessRequiredError, accessStatus, signOutAccess, type ChatAccess } from '@/services/assistantService';
+import { AccessGate } from '@/components/chat/AccessGate';
 import { getCurrentTimestamp } from '@/utils/textUtils';
 
 export default function CustomerChatPage() {
@@ -18,6 +19,7 @@ export default function CustomerChatPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
+  const [access, setAccess] = useState<ChatAccess>();
   const pending = useRef(false);
   const poll = useRef<AbortController | null>(null);
   const mounted = useRef(true);
@@ -53,6 +55,7 @@ export default function CustomerChatPage() {
     return () => { stopped = true; mounted.current = false; if (timer) clearTimeout(timer); poll.current?.abort(); poll.current = null;
       document.removeEventListener('visibilitychange', visibility); ownedUrls.current.forEach(url => URL.revokeObjectURL(url)); };
   }, [applySnapshot]);
+  useEffect(() => { accessStatus().then(setAccess).catch(() => setAccess({ granted: false, username: null })); }, []);
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, busy]);
   function begin() {
     if (pending.current || !ready) return false;
@@ -79,6 +82,7 @@ export default function CustomerChatPage() {
       else await assistantService.processTextMessage({ query: text || '', requestId: id });
       applySnapshot(await assistantService.restore());
     } catch (failure) {
+      if (failure instanceof AccessRequiredError) setAccess({ granted: false, username: null });
       const message = failure instanceof Error ? failure.message : 'The assistant could not process your message.';
       setMessages(previous => [...previous.filter(m => m.id !== `error-${id}`), { id: `error-${id}`, sender: 'system', contentType: 'text',
         isError: true, errorMessage: message, canRetry: true, timestamp: getCurrentTimestamp() }]);
@@ -100,6 +104,8 @@ export default function CustomerChatPage() {
       <div className="bg-white/60 border-b border-stone-200/60 px-5 sm:px-7 py-3 flex flex-wrap items-center justify-between gap-3 text-[11px] text-stone-600">
         <span>{snapshot?.state === 'HUMAN_ACTIVE' ? 'Store team is handling this conversation' : snapshot?.state === 'HANDOFF_REQUESTED' ? 'Human help requested · A person may reply later' : 'AI assistant · Ask about perfumes and store policies'}</span>
         <div className="flex flex-wrap items-center gap-3">
+          {access?.granted && !access.username && <span>Signed in as <strong>owner</strong> (via <a className="underline" href="/owner">owner portal</a>)</span>}
+          {access?.username && <span>Signed in as <strong>{access.username}</strong> · <button className="underline" onClick={() => void signOutAccess().then(setAccess).catch(failure => setError(failure.message))}>Sign out</button></span>}
           <label>Reply format: <select aria-label="Reply format" disabled={busy || !ready} value={snapshot?.replyFormat || 'match'} onChange={e => void action({ action: 'preference', replyFormat: e.target.value }).catch(() => {})} className="bg-transparent border border-stone-200 rounded p-1">
             <option value="match">Match my message</option><option value="text">Text only</option>
           </select></label>
@@ -108,7 +114,7 @@ export default function CustomerChatPage() {
       </div>
       {error && <p role="alert" className="text-xs text-red-700 px-4 py-2">{error} <button className="underline" onClick={() => void assistantService.restore().then(value => { applySnapshot(value); setError(''); }).catch(failure => setError(failure.message))}>Reload conversation</button></p>}
       <div className="flex-1 overflow-y-auto px-4 sm:px-7 py-6 flex flex-col min-w-0">
-        {!ready ? <p className="text-xs text-stone-500">Loading your conversation...</p> : messages.length === 0 && !snapshot?.draft ? <EmptyState onSelectSuggestion={text => void send(text)} /> :
+        {!ready ? <p className="text-xs text-stone-500">Loading your conversation...</p> : messages.length === 0 && !snapshot?.draft ? <EmptyState onSelectSuggestion={text => { if (access?.granted) void send(text); }} /> :
           <div className="flex flex-col space-y-1">{messages.map(message => <ChatMessageItem key={message.id} message={message} onRetry={retry} onAskAboutProduct={name => void send(`Mujhe ${name} ke notes aur availability ke baray mein batayein.`)} />)}</div>}
         {snapshot?.draft && <OrderSummary key={`${snapshot.draft.id}-${snapshot.draft.revision}-${snapshot.draft.quoteToken}`} draft={snapshot.draft} catalogue={snapshot.catalogue} paymentMethods={snapshot.paymentMethods}
           disabled={busy || snapshot.state === 'HUMAN_ACTIVE'} onEdit={editOrder} onSubmit={async () => {
@@ -116,7 +122,8 @@ export default function CustomerChatPage() {
           }} />}
         {busy && <TypingIndicator />}<div ref={bottom} />
       </div>
-      <ChatComposer onSendMessage={text => void send(text)} onSendVoiceMessage={(audioBlob, duration) => send(undefined, { audioBlob, duration })} disabled={busy || !ready} />
+      {access && !access.granted ? <AccessGate onGranted={username => setAccess({ granted: true, username })} /> :
+        <ChatComposer onSendMessage={text => void send(text)} onSendVoiceMessage={(audioBlob, duration) => send(undefined, { audioBlob, duration })} disabled={busy || !ready || !access?.granted} />}
     </div>
   </main></AudioPlayerProvider>;
 }

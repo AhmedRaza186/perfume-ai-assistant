@@ -16,36 +16,36 @@ const actions = z.discriminatedUnion('action', [
   z.object({ action: z.literal('knowledge'), entry: knowledgeSchema }).strict(),
   z.object({ action: z.literal('delete-knowledge'), id, revision: z.number().int().min(0) }).strict(),
 ]);
-function snapshot() {
-  return { orders: orderRequests(), knowledge: knowledgeEntries(), conversations: db().prepare('SELECT id,state,created FROM conversations ORDER BY created DESC LIMIT 100').all() };
+async function snapshot() {
+  return { orders: await orderRequests(), knowledge: await knowledgeEntries(), conversations: await db().prepare('SELECT id,state,created FROM conversations ORDER BY created DESC LIMIT 100').all() };
 }
 export async function GET(request: Request) {
   return guarded(async () => {
     await requireAdmin();
     const raw = new URL(request.url).searchParams.get('id');
     if (raw) {
-      const value = parse(id, raw); const row = conversation(value);
-      return json({ conversationId: row.id, state: row.state, messages: conversationMessages(row.id), draft: orderDraft(row.id), orders: orderRequests(row.id) }, 200, 'Conversation details were loaded. Private recordings expire after 15 minutes; transcripts remain available.');
+      const value = parse(id, raw); const row = await conversation(value);
+      return json({ conversationId: row.id, state: row.state, messages: await conversationMessages(row.id), draft: await orderDraft(row.id), orders: await orderRequests(row.id) }, 200, 'Conversation details were loaded. Private recordings expire after 15 minutes; transcripts remain available.');
     }
-    return json(snapshot(), 200, 'Order requests, knowledge and conversations were loaded.');
+    return json(await snapshot(), 200, 'Order requests, knowledge and conversations were loaded.');
   });
 }
 export async function POST(request: Request) {
   return guarded(async () => {
     await requireAdmin(); sameOrigin(request);
     const input = parse(actions, await readJson(request));
-    if (input.action === 'state') setConversationState(input.conversationId, input.state);
-    else if (input.action === 'message') sendHumanMessage(input.conversationId, input.text, input.requestId);
-    else if (input.action === 'knowledge') saveKnowledge(input.entry);
-    else if (input.action === 'delete-knowledge') deleteKnowledge(input.id, input.revision);
-    else transaction(() => {
-      const row = db().prepare('SELECT value FROM order_requests WHERE id=?').get(input.id);
+    if (input.action === 'state') await setConversationState(input.conversationId, input.state);
+    else if (input.action === 'message') await sendHumanMessage(input.conversationId, input.text, input.requestId);
+    else if (input.action === 'knowledge') await saveKnowledge(input.entry);
+    else if (input.action === 'delete-knowledge') await deleteKnowledge(input.id, input.revision);
+    else await transaction(async () => {
+      const row = await db().prepare('SELECT value FROM order_requests WHERE id=?').get<{ value: string }>(input.id);
       if (!row) throw new PublicError(404, 'This order request was not found.');
-      const order: OrderRequest = JSON.parse(String(row.value));
+      const order: OrderRequest = JSON.parse(row.value);
       if (order.revision !== input.revision) throw new PublicError(409, 'This order request changed. Reload before saving.');
-      db().prepare('UPDATE order_requests SET value=? WHERE id=?').run(JSON.stringify({ ...order, status: input.status, notes: input.notes, revision: order.revision + 1 }), input.id);
+      await db().prepare('UPDATE order_requests SET value=? WHERE id=?').run(JSON.stringify({ ...order, status: input.status, notes: input.notes, revision: order.revision + 1 }), input.id);
     });
-    return json(snapshot(), 200, 'Your changes were saved successfully.');
+    return json(await snapshot(), 200, 'Your changes were saved successfully.');
   });
 }
 export const PUT = () => methodNotAllowed(['GET', 'POST']);

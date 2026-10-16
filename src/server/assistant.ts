@@ -51,29 +51,29 @@ function enrich(answer: Answer, query: string, catalogue: Product[], history: Hi
 export async function respond(input: Input, owner: string): Promise<AssistantServiceResponse> {
   let conversationId = input.conversationId || ''; let epoch = 0;
   const fingerprint = hash(input.file ? Buffer.from(await input.file.arrayBuffer()).toString('base64') : input.query!);
-  const previous = transaction(() => {
-    const existing = db().prepare('SELECT conversations.id FROM conversations JOIN turns ON turns.conversation=conversations.id WHERE conversations.owner=? AND turns.request=?').get(owner, input.requestId) as { id: string } | undefined;
+  const previous = await transaction(async () => {
+    const existing = await db().prepare('SELECT conversations.id FROM conversations JOIN turns ON turns.conversation=conversations.id WHERE conversations.owner=? AND turns.request=?').get<{ id: string }>(owner, input.requestId);
     if (existing) {
       if (input.conversationId && input.conversationId !== existing.id) throw new PublicError(409, 'This request identifier was already used.');
       conversationId = existing.id;
     }
-    if (!existing && db().prepare('SELECT request FROM turns WHERE request=?').get(input.requestId)) throw new PublicError(409, 'This request identifier was already used.');
-    if (input.conversationId || existing) conversation(conversationId, owner); else conversationId = startConversation(owner);
-    const current = conversation(conversationId, owner); epoch = current.epoch;
-    const row = db().prepare('SELECT status,fingerprint,response,epoch FROM turns WHERE conversation=? AND request=?').get(conversationId, input.requestId) as TurnRow | undefined;
+    if (!existing && await db().prepare('SELECT request FROM turns WHERE request=?').get(input.requestId)) throw new PublicError(409, 'This request identifier was already used.');
+    if (input.conversationId || existing) await conversation(conversationId, owner); else conversationId = await startConversation(owner);
+    const current = await conversation(conversationId, owner); epoch = current.epoch;
+    const row = await db().prepare('SELECT status,fingerprint,response,epoch FROM turns WHERE conversation=? AND request=?').get<TurnRow>(conversationId, input.requestId);
     if (row) {
       if (row.fingerprint !== fingerprint) throw new PublicError(409, 'This request identifier was already used.');
       if (row.status === 'complete') {
-        const result = liveResponse(JSON.parse(row.response!));
+        const result = await liveResponse(JSON.parse(row.response!));
         if (result.responseType === 'ai' && (current.state === 'HUMAN_ACTIVE' || row.epoch !== current.epoch))
           return { conversationId, text: current.state === 'HUMAN_ACTIVE' ? humanReceipt : 'Your message was saved. Conversation handling changed; please send your question again.', transcript: result.transcript, responseType: 'receipt' as const, state: current.state };
         return result;
       }
       throw new PublicError(409, row.status === 'pending' ? 'This request is still processing. Please wait.' : 'This request failed. Send a new request to retry.');
     }
-    if (db().prepare("SELECT request FROM turns WHERE conversation=? AND status='pending'").get(conversationId)) throw new PublicError(409, 'Please wait for the previous answer.');
-    setCurrent(owner, conversationId);
-    db().prepare('INSERT INTO turns (conversation,request,fingerprint,query,channel,status,response,created,epoch) VALUES (?,?,?,?,?,?,NULL,?,?)')
+    if (await db().prepare("SELECT request FROM turns WHERE conversation=? AND status='pending'").get(conversationId)) throw new PublicError(409, 'Please wait for the previous answer.');
+    await setCurrent(owner, conversationId);
+    await db().prepare('INSERT INTO turns (conversation,request,fingerprint,query,channel,status,response,created,epoch) VALUES (?,?,?,?,?,?,NULL,?,?)')
       .run(conversationId, input.requestId, fingerprint, input.query || '', input.file ? 'Voice Note' : 'Chat', 'pending', Date.now(), epoch);
     return null;
   });
@@ -82,69 +82,69 @@ export async function respond(input: Input, owner: string): Promise<AssistantSer
     if (input.file) {
       const id = randomUUID();
       const bytes = Buffer.from(await input.file.arrayBuffer());
-      db().prepare('INSERT INTO recordings VALUES (?,?,?,?,?,?,?)').run(id, owner, conversationId, bytes, input.file.type.split(';')[0], Date.now() + 15 * 60_000, input.audioDurationSeconds || null);
-      db().prepare('UPDATE turns SET recording=? WHERE conversation=? AND request=?').run(id, conversationId, input.requestId);
+      await db().prepare('INSERT INTO recordings VALUES (?,?,?,?,?,?,?)').run(id, owner, conversationId, bytes, input.file.type.split(';')[0], Date.now() + 15 * 60_000, input.audioDurationSeconds || null);
+      await db().prepare('UPDATE turns SET recording=? WHERE conversation=? AND request=?').run(id, conversationId, input.requestId);
     }
     const query = input.file ? await transcribe(input.file) : input.query!;
-    db().prepare('UPDATE turns SET query=? WHERE conversation=? AND request=?').run(query, conversationId, input.requestId);
-    const receipt = (): AssistantServiceResponse => {
-      const state = conversation(conversationId).state;
+    await db().prepare('UPDATE turns SET query=? WHERE conversation=? AND request=?').run(query, conversationId, input.requestId);
+    const receipt = async (): Promise<AssistantServiceResponse> => {
+      const state = (await conversation(conversationId)).state;
       return { text: state === 'HUMAN_ACTIVE' ? humanReceipt : 'Your message was saved. Conversation handling changed; please send your question again.', conversationId, responseType: 'receipt', state, ...(input.file ? { transcript: query } : {}) };
     };
-    const stale = () => { const current = conversation(conversationId); return current.state === 'HUMAN_ACTIVE' || current.epoch !== epoch; };
+    const stale = async () => { const current = await conversation(conversationId); return current.state === 'HUMAN_ACTIVE' || current.epoch !== epoch; };
     let response: AssistantServiceResponse;
-    if (stale()) response = receipt();
+    if (await stale()) response = await receipt();
     else if (naturalHandoff(query)) {
-      requestHandoff(conversationId, query, input.file ? 'Voice Note' : 'Chat');
+      await requestHandoff(conversationId, query, input.file ? 'Voice Note' : 'Chat');
       response = { text: handoffSaved, conversationId, responseType: 'workflow', isHumanHelpTriggered: true };
     } else {
-      const submitted = confirmInChat(conversationId, query);
-      if (submitted) response = { text: `${orderReceived} Reference: ${submitted.reference}`, conversationId, responseType: 'workflow', orderReference: submitted.reference, draft: orderDraft(conversationId) };
+      const submitted = await confirmInChat(conversationId, query);
+      if (submitted) response = { text: `${orderReceived} Reference: ${submitted.reference}`, conversationId, responseType: 'workflow', orderReference: submitted.reference, draft: await orderDraft(conversationId) };
       else {
-        const history = (db().prepare("SELECT query,response FROM turns WHERE conversation=? AND status='complete' ORDER BY rowid DESC LIMIT 12").all(conversationId) as { query: string; response: string }[])
+        const history = (await db().prepare("SELECT query,response FROM turns WHERE conversation=? AND status='complete' ORDER BY seq DESC LIMIT 12").all<{ query: string; response: string }>(conversationId))
           .reverse().map(row => ({ query: row.query, response: JSON.parse(row.response) })) as HistoryTurn[];
-        const catalogue = products(); const rules = policies(); const language = replyLanguage(query, history.map(turn => turn.query), !!input.file);
-        const answer = await answerQuestion(query, history, catalogue, rules, { draft: orderDraft(conversationId), paymentMethods: paymentMethods(), replyLanguage: language,
-          messages: modelHistory(conversationId).filter(m => !(m.role === 'user' && m.text === JSON.stringify({ sender: 'customer', text: query }))) });
-        if (stale()) response = receipt();
+        const catalogue = await products(); const rules = await policies(); const language = replyLanguage(query, history.map(turn => turn.query), !!input.file);
+        const answer = await answerQuestion(query, history, catalogue, rules, { draft: await orderDraft(conversationId), paymentMethods: await paymentMethods(), replyLanguage: language,
+          messages: (await modelHistory(conversationId)).filter(m => !(m.role === 'user' && m.text === JSON.stringify({ sender: 'customer', text: query }))) });
+        if (await stale()) response = await receipt();
         else {
-          response = { text: answer.text, conversationId, responseType: 'ai', isHumanHelpTriggered: answer.handoff, ...enrich(answer, query, products(), history, language) };
+          response = { text: answer.text, conversationId, responseType: 'ai', isHumanHelpTriggered: answer.handoff, ...enrich(answer, query, await products(), history, language) };
           if (answer.intent === 'order' || answer.orderPatch) {
-            const draft = patchDraft(conversationId, answer.orderPatch || {});
-            response.draft = markDraftPresented(conversationId); response.responseType = 'workflow';
+            const draft = await patchDraft(conversationId, answer.orderPatch || {});
+            response.draft = await markDraftPresented(conversationId); response.responseType = 'workflow';
             response.text = draft.ready ? wording(language, 'Please review and edit the order request summary below, then explicitly confirm submission. Payment has not been collected.',
               'Neeche order request summary review aur edit karein, phir submit karne ki confirmation dein. Payment receive nahin hui.', 'نیچے آرڈر کی درخواست کا خلاصہ دیکھیں، ترمیم کریں اور جمع کرانے کی تصدیق کریں۔ ادائیگی وصول نہیں ہوئی۔')
               : wording(language, `Please provide: ${draft.missing[0] || 'an available product'}. You can edit the other details in the summary below.`,
                 `Order request ke liye ${draft.missing[0] || 'available product'} batayein. Baqi details neeche summary mein edit kar sakte hain.`, `آرڈر کی درخواست کے لیے ${draft.missing[0] || 'دستیاب پرفیوم'} بتائیں۔ دیگر معلومات نیچے خلاصے میں درج کر سکتے ہیں۔`);
           }
-          if (answer.handoff) requestHandoff(conversationId, query, input.file ? 'Voice Note' : 'Chat');
+          if (answer.handoff) await requestHandoff(conversationId, query, input.file ? 'Voice Note' : 'Chat');
         }
       }
     }
     let audio: { bytes: Buffer; duration: number } | undefined;
     if (input.file) {
       response.transcript = query;
-      if (response.responseType !== 'receipt' && preferences(owner).reply_format !== 'text' && !stale()) {
+      if (response.responseType !== 'receipt' && (await preferences(owner)).reply_format !== 'text' && !await stale()) {
         response.audioStatus = 'unavailable';
         try { audio = await synthesize(response.text); }
         catch (error) { response.audioUnavailableReason = error instanceof PublicError ? error.message : 'Voice generation failed. Please read the answer text.'; }
       }
     }
-    transaction(() => {
-      if (stale()) { response = receipt(); audio = undefined; }
+    await transaction(async () => {
+      if (await stale()) { response = await receipt(); audio = undefined; }
       if (audio) {
         const id = randomUUID();
-        db().prepare('INSERT INTO audio VALUES (?,?,?,?)').run(id, owner, audio.bytes, Date.now() + 15 * 60_000);
+        await db().prepare('INSERT INTO audio VALUES (?,?,?,?)').run(id, owner, audio.bytes, Date.now() + 15 * 60_000);
         response.audioUrl = `/api/audio/${id}`; response.audioStatus = 'ready'; response.audioDuration = audio.duration;
       }
-      response.state = conversation(conversationId).state;
-      db().prepare("UPDATE turns SET query=?,response=?,status='complete' WHERE conversation=? AND request=?").run(query, JSON.stringify(response), conversationId, input.requestId);
+      response.state = (await conversation(conversationId)).state;
+      await db().prepare("UPDATE turns SET query=?,response=?,status='complete' WHERE conversation=? AND request=?").run(query, JSON.stringify(response), conversationId, input.requestId);
     });
     return response;
   } catch (error) {
     const failure = error instanceof PublicError ? { text: error.message, code: error.code }
       : { text: 'The server could not complete your message. Please try again later.', code: 'request_failed' };
-    db().prepare("UPDATE turns SET status='failed',response=? WHERE conversation=? AND request=?").run(JSON.stringify(failure), conversationId, input.requestId);
+    await db().prepare("UPDATE turns SET status='failed',response=? WHERE conversation=? AND request=?").run(JSON.stringify(failure), conversationId, input.requestId);
     throw error;
   }
 }

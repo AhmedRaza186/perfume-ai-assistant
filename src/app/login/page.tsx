@@ -18,7 +18,8 @@ export default function LoginPage() {
       finally { setBusy(false); }
     }}>
       <h1 className="text-base font-semibold">Store Administration</h1>
-      <label className="block text-xs">Username<input name="username" autoComplete="username" required maxLength={100} className="mt-1 w-full rounded-md border border-stone-200 p-2" /></label>
+      <p className="text-xs text-stone-500">Use the username and password you were given.</p>
+      <label className="block text-xs">Username<input name="username" autoComplete="username" required maxLength={64} className="mt-1 w-full rounded-md border border-stone-200 p-2" /></label>
       <label className="block text-xs">Password<input name="password" type="password" autoComplete="current-password" required maxLength={256} className="mt-1 w-full rounded-md border border-stone-200 p-2" /></label>
       {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
       <button disabled={busy} className="rounded-lg bg-stone-900 px-4 py-2 text-xs text-white disabled:opacity-50">{busy ? 'Signing in…' : 'Sign in'}</button>

@@ -12,10 +12,10 @@ export async function GET(request: Request) {
     const id = new URL(request.url).searchParams.get('id');
     if (id !== null) {
       parse(z.string().uuid(), id);
-      if (!db().prepare('SELECT id FROM conversations WHERE id=?').get(id)) throw new PublicError(404, 'This conversation was not found. It may have expired or been deleted.');
-      return json(db().prepare('SELECT query,channel,status,response,created FROM turns WHERE conversation=? ORDER BY rowid LIMIT 200').all(id).map(row => ({ ...row, response: row.response ? JSON.parse(String(row.response)) : null })), 200, 'Conversation messages were loaded successfully.');
+      if (!await db().prepare('SELECT id FROM conversations WHERE id=?').get(id)) throw new PublicError(404, 'This conversation was not found. It may have expired or been deleted.');
+      return json((await db().prepare('SELECT query,channel,status,response,created FROM turns WHERE conversation=? ORDER BY seq LIMIT 200').all(id)).map(row => ({ ...row, response: row.response ? JSON.parse(String(row.response)) : null })), 200, 'Conversation messages were loaded successfully.');
     }
-    return json(db().prepare('SELECT id,created FROM conversations ORDER BY created DESC LIMIT 100').all(), 200, 'Saved conversations were loaded successfully.');
+    return json(await db().prepare('SELECT id,created FROM conversations ORDER BY created DESC LIMIT 100').all(), 200, 'Saved conversations were loaded successfully.');
   });
 }
 

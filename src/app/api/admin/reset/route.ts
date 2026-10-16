@@ -9,7 +9,7 @@ export async function POST(request: Request) {
     if (process.env.ENABLE_DEMO_RESET !== 'true') throw new PublicError(403, 'Demo reset is disabled. Enable ENABLE_DEMO_RESET locally only when you intend to reset the demo.', 'reset_disabled');
     const body = await readJson(request);
     if (body?.confirmation !== 'RESET DEMO DATA') throw new PublicError(400, 'To confirm the reset, send confirmation with the exact value RESET DEMO DATA.', 'confirmation_required');
-    return json(resetStore(), 200, 'Demo products and policies were restored. Saved conversations, audio and enquiries were deleted.');
+    return json(await resetStore(), 200, 'Demo products and policies were restored. Saved conversations, audio and enquiries were deleted.');
   });
 }
 

@@ -8,8 +8,8 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const id = parse(z.string().uuid(), (await context.params).id);
     const admin = await isAdmin();
     const owner = admin ? undefined : await existingCustomerOwner();
-    const row = (admin ? db().prepare('SELECT bytes,mime FROM recordings WHERE id=? AND expires>?').get(id, Date.now())
-      : db().prepare('SELECT bytes,mime FROM recordings WHERE id=? AND owner=? AND expires>?').get(id, owner!, Date.now())) as { bytes: Uint8Array; mime: string } | undefined;
+    const row = admin ? await db().prepare('SELECT bytes,mime FROM recordings WHERE id=? AND expires>?').get<{ bytes: Uint8Array; mime: string }>(id, Date.now())
+      : await db().prepare('SELECT bytes,mime FROM recordings WHERE id=? AND owner=? AND expires>?').get<{ bytes: Uint8Array; mime: string }>(id, owner!, Date.now());
     if (!row) throw new PublicError(404, 'This recording expired or is unavailable. Use its saved transcript.');
     const total = row.bytes.length;
     const headers = { ...privateHeaders, 'Content-Type': row.mime, 'Accept-Ranges': 'bytes', 'Content-Disposition': 'inline', 'X-Response-Message': 'Private voice recording is ready for manual playback.' };
