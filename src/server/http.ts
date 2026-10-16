@@ -24,11 +24,16 @@ export function methodNotAllowed(allowed: string[]) {
 export async function guarded(fn: () => Promise<Response>) {
   try { await cleanup(); return await fn(); } catch (error) { return errorResponse(error); }
 }
+/** APP_ORIGIN (comma-separated) plus the deployment, branch and production URLs Vercel exposes at runtime. */
+export function configuredOrigins() {
+  const vercel = [process.env.VERCEL_URL, process.env.VERCEL_BRANCH_URL, process.env.VERCEL_PROJECT_PRODUCTION_URL].filter(Boolean).map(host => `https://${host}`);
+  return [...(process.env.APP_ORIGIN || '').split(','), ...vercel].map(origin => origin.trim().replace(/\/+$/, '')).filter(Boolean);
+}
 export function sameOrigin(request: Request) {
   const url = new URL(request.url);
-  const configured = process.env.APP_ORIGIN;
-  const allowed = configured || (['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) ? url.origin : '');
-  if (!allowed || request.headers.get('origin') !== allowed) throw new PublicError(403, 'Request origin is not allowed. Send this request from the store website using the configured APP_ORIGIN.', 'origin_not_allowed');
+  const configured = configuredOrigins();
+  const allowed = configured.length ? configured : ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) ? [url.origin] : [];
+  if (!allowed.includes(request.headers.get('origin') || '')) throw new PublicError(403, 'Request origin is not allowed. Send this request from the store website using the configured APP_ORIGIN.', 'origin_not_allowed');
 }
 export async function boundedBody(request: Request, max: number): Promise<Uint8Array> {
   if (Number(request.headers.get('content-length')) > max) throw new PublicError(413, 'Request is too large.');

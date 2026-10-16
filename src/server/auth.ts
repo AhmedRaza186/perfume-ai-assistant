@@ -3,7 +3,7 @@ import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { cookies } from 'next/headers';
 import { db } from './db';
-import { hash, PublicError } from './http';
+import { configuredOrigins, hash, PublicError } from './http';
 import { chatAccess } from './access';
 
 const derive = promisify(scrypt);
@@ -17,7 +17,8 @@ export async function validSession(token: string | undefined, role: string): Pro
 export async function isAdmin() { return (await chatAccess()).granted; }
 export async function requireAdmin() { if (!await isAdmin()) throw new PublicError(401, 'Please sign in with your assigned username and password.', 'unauthorized'); }
 export function secureCookies() {
-  const origin = new URL(process.env.APP_ORIGIN || 'http://localhost:3000');
+  if (process.env.VERCEL) return true; // Vercel always serves HTTPS.
+  const origin = new URL(configuredOrigins()[0] || 'http://localhost:3000');
   if (origin.protocol === 'https:') return true;
   if (!['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)) throw new PublicError(503, 'HTTPS is required for this server.');
   return false; // HTTP cookies only on loopback for a local demo.

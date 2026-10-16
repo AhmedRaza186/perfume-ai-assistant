@@ -170,6 +170,13 @@ test('limits, free-tier gate, expiration and session validation fail closed', as
 test('CSRF rejects cross-origin requests and streaming input is bounded independently of Content-Length', async () => {
   process.env.APP_ORIGIN = 'http://localhost:3000';
   assert.throws(() => sameOrigin(new Request('http://localhost:3000/api/chat', { headers: { origin: 'https://evil.example' } })), /origin/);
+  const from = (origin: string) => new Request('https://shop.example/api/chat', { headers: { origin } });
+  process.env.APP_ORIGIN = 'https://shop.example/, https://www.shop.example';
+  Object.assign(process.env, { VERCEL_URL: 'app-abc123.vercel.app', VERCEL_BRANCH_URL: 'app-git-main.vercel.app' });
+  try {
+    for (const origin of ['https://shop.example', 'https://www.shop.example', 'https://app-abc123.vercel.app', 'https://app-git-main.vercel.app']) sameOrigin(from(origin));
+    assert.throws(() => sameOrigin(from('https://app-other.vercel.app')), /origin/);
+  } finally { delete process.env.VERCEL_URL; delete process.env.VERCEL_BRANCH_URL; process.env.APP_ORIGIN = 'http://localhost:3000'; }
   await assert.rejects(boundedBody(new Request('http://localhost:3000', { method: 'POST', body: 'oversized' }), 2), /too large/);
 });
 function wav(seconds: number) {
