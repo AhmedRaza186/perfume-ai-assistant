@@ -1,0 +1,42 @@
+const fs = require('fs');
+const path = require('path');
+
+const imgDir = path.join(__dirname, '../public/images/products');
+if (!fs.existsSync(imgDir)) {
+  fs.mkdirSync(imgDir, { recursive: true });
+}
+
+function generatePerfumeSvg(name, colorAccent) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="100%" height="100%">
+    <rect width="160" height="160" rx="12" fill="#FAF8F5"/>
+    <!-- Bottle Cap -->
+    <rect x="70" y="32" width="20" height="16" rx="2" fill="#2C2A29" stroke="#1C1917" stroke-width="1.5"/>
+    <rect x="74" y="48" width="12" height="6" fill="#D6D1CA"/>
+    <!-- Bottle Body -->
+    <rect x="52" y="54" width="56" height="74" rx="6" fill="#FFFFFF" stroke="#E5E0D8" stroke-width="2"/>
+    <!-- Liquid tint -->
+    <rect x="55" y="70" width="50" height="55" rx="3" fill="${colorAccent}" opacity="0.25"/>
+    <!-- Label -->
+    <rect x="58" y="72" width="44" height="38" rx="2" fill="#FFFFFF" stroke="#EFECE6" stroke-width="1"/>
+    <!-- Label text/line representation -->
+    <line x1="64" y1="82" x2="96" y2="82" stroke="#2C2A29" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="68" y1="88" x2="92" y2="88" stroke="#78716C" stroke-width="1" stroke-linecap="round"/>
+    <line x1="72" y1="94" x2="88" y2="94" stroke="#A8A29E" stroke-width="0.8" stroke-linecap="round"/>
+    <!-- Subtle shine on bottle -->
+    <path d="M 56 60 L 56 122" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+  </svg>`;
+}
+
+const products = [
+  { file: 'velvet-oud.svg', name: 'Velvet Oud', color: '#B45309' },
+  { file: 'citrus-breeze.svg', name: 'Citrus Breeze', color: '#F59E0B' },
+  { file: 'amber-royale.svg', name: 'Amber Royale', color: '#92400E' },
+  { file: 'rose-noir.svg', name: 'Rose Noir', color: '#E11D48' },
+];
+
+products.forEach(p => {
+  fs.writeFileSync(path.join(imgDir, p.file), generatePerfumeSvg(p.name, p.color));
+});
+
+console.log('Product SVGs created successfully in', imgDir);
+

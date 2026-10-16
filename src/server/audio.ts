@@ -1,0 +1,47 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import ffprobe from 'ffprobe-static';
+import { PublicError } from './http';
+
+const exec = promisify(execFile);
+export const AUDIO_LIMIT = 5 * 1024 * 1024;
+const formats: Record<string, { extension: string; format: RegExp }> = {
+  'audio/webm': { extension: 'webm', format: /webm|matroska/ },
+  'audio/mp4': { extension: 'mp4', format: /mov|mp4|m4a/ },
+  'audio/ogg': { extension: 'ogg', format: /ogg/ },
+  'audio/wav': { extension: 'wav', format: /wav/ },
+};
+export async function validateAudio(file: File) {
+  const type = file.type.split(';')[0].toLowerCase();
+  const format = formats[type];
+  if (!format) throw new PublicError(415, 'Record a WebM, MP4, Ogg or WAV voice note.');
+  if (file.size < 100 || file.size > AUDIO_LIMIT) throw new PublicError(413, 'Voice notes must be nonempty and under 5 MB.');
+  const directory = await mkdtemp(path.join(tmpdir(), 'perfume-voice-'));
+  const filename = path.join(directory, `recording.${format.extension}`);
+  try {
+    await writeFile(filename, Buffer.from(await file.arrayBuffer()));
+    // Inspect the container AND packets: MediaRecorder WebM frequently lacks a duration header.
+    const { stdout } = await exec(process.env.FFPROBE_PATH || ffprobe.path,
+      ['-v', 'error', '-show_entries', 'format=format_name,duration:stream=codec_type:packet=pts_time,duration_time', '-of', 'json', filename],
+      { timeout: 8000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+    const info = JSON.parse(stdout);
+    const packets: { pts_time?: string; duration_time?: string }[] = info.packets || [];
+    const ends = packets.map(p => Number(p.pts_time || 0) + Number(p.duration_time || 0)).filter(Number.isFinite);
+    const duration = Math.max(Number(info.format?.duration) || 0, ends.length ? Math.max(...ends) : 0);
+    if (!format.format.test(info.format?.format_name || '') || !info.streams?.some((s: { codec_type: string }) => s.codec_type === 'audio') ||
+      info.streams?.some((s: { codec_type: string }) => s.codec_type === 'video') || !Number.isFinite(duration) || duration < 0.1 || duration > 60.5)
+      throw new PublicError(422, 'Invalid recording. Voice notes must contain audio and last up to 60 seconds.');
+    return new File([await file.arrayBuffer()], `recording.${format.extension}`, { type });
+  } catch (error) {
+    if (error instanceof PublicError) throw error;
+    throw new PublicError(422, 'Could not read this recording. Please record again or type your question.');
+  } finally {
+    const resolved = path.resolve(directory);
+    const parent = path.resolve(tmpdir());
+    if (path.dirname(resolved) !== parent || !path.basename(resolved).startsWith('perfume-voice-')) throw new Error('Unexpected temporary path');
+    await rm(resolved, { recursive: true, force: true });
+  }
+}
