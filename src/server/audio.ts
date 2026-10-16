@@ -37,6 +37,8 @@ export async function validateAudio(file: File) {
     return new File([await file.arrayBuffer()], `recording.${format.extension}`, { type });
   } catch (error) {
     if (error instanceof PublicError) throw error;
+    // Only the failure kind is logged (e.g. ENOENT when the ffprobe binary is missing), never the recording.
+    console.error('Voice note inspection failed:', (error as NodeJS.ErrnoException).code ?? (error as Error).name);
     throw new PublicError(422, 'Could not read this recording. Please record again or type your question.');
   } finally {
     const resolved = path.resolve(directory);
